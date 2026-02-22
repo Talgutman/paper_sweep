@@ -1,0 +1,68 @@
+name: resend-policy-watchdog
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 7 1 * *"
+
+permissions:
+  contents: write
+
+jobs:
+  check-resend-pricing:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check pricing page
+        id: pricing
+        run: python scripts/check_resend_pricing.py --snapshot state/resend_pricing_snapshot.json
+
+      - name: Alert on policy change
+        if: steps.pricing.outputs.changed == 'true'
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          REPORT_RECIPIENT: ${{ vars.REPORT_RECIPIENT }}
+          REPORT_SENDER: ${{ vars.REPORT_SENDER }}
+          REPORT_REPLY_TO: ${{ vars.REPORT_REPLY_TO }}
+        shell: bash
+        run: |
+          recipient="${REPORT_RECIPIENT:-tgutman100@gmail.com}"
+          sender="${REPORT_SENDER:-onboarding@resend.dev}"
+          note_file="$(mktemp)"
+          {
+            echo "Resend pricing page appears to have changed."
+            echo
+            echo "${{ steps.pricing.outputs.summary }}"
+            echo
+            echo "Please review: https://resend.com/pricing"
+          } > "$note_file"
+          python scripts/send_email_resend.py \
+            --subject "Alert: Resend pricing/free-tier changed" \
+            --to "$recipient" \
+            --from "$sender" \
+            --input "$note_file"
+
+      - name: Commit updated snapshot
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/resend_pricing_snapshot.json
+          if git diff --cached --quiet; then
+            echo "No snapshot changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: update resend pricing snapshot"
+          git push

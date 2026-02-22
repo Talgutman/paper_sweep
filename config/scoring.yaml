@@ -1,0 +1,48 @@
+version: 1
+
+scoring:
+  scale_min: 0
+  scale_max: 100
+  weighted_dimensions:
+    evidence_strength: 0.30
+    clinical_or_scientific_impact: 0.25
+    novelty: 0.15
+    breadth_of_relevance: 0.15
+    methodological_quality: 0.10
+    user_relevance: 0.05
+
+thresholds:
+  include_default: 70
+  include_preprint: 85
+  include_conference: 82
+  include_exceptional_medicine: 80
+
+evidence_strength_guide:
+  regulatory_decision_or_guideline: 95
+  phase_iii_randomized: 90
+  phase_ii_with_strong_signal: 78
+  high_quality_observational: 68
+  conference_abstract_only: 60
+  preprint_only: 55
+
+gates:
+  preprint:
+    require_all:
+      - "score >= include_preprint"
+      - "clear methodological rigor"
+      - "substantial downstream relevance"
+      - "explicit caveat labeling in report"
+  conference:
+    require_any:
+      - "late-breaking or plenary-quality signal"
+      - "practice-changing likelihood in near term"
+      - "guideline or regulator relevance"
+    require_all:
+      - "score >= include_conference"
+      - "explicit uncertainty labeling in report"
+
+ranking_policy:
+  - "Rank all candidate items by score."
+  - "Enforce section quotas from SPEC.md."
+  - "Break ties using evidence_strength, then breadth_of_relevance."
+  - "De-prioritize duplicated coverage of same underlying development."

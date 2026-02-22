@@ -1,0 +1,141 @@
+version: 1
+notes:
+  - "Global coverage with emphasis on primary and high-trust sources."
+  - "Preprints are polled but filtered aggressively via scoring thresholds."
+
+lanes:
+  cancer:
+    weight: 0.50
+    sources:
+      - id: fda_oncology_approvals
+        type: regulator
+        priority: 1
+        url: "https://www.fda.gov/drugs/resources-information-approved-drugs/oncology-cancerhematologic-malignancies-approval-notifications"
+      - id: fda_accelerated_approvals
+        type: regulator
+        priority: 1
+        url: "https://www.fda.gov/drugs/nda-and-bla-approvals/accelerated-approvals"
+      - id: ema_human_medicines_news
+        type: regulator
+        priority: 1
+        url: "https://www.ema.europa.eu/en/news"
+      - id: nci_news_events
+        type: institute
+        priority: 1
+        url: "https://www.cancer.gov/news-events"
+      - id: clinicaltrials_gov
+        type: registry
+        priority: 1
+        url: "https://clinicaltrials.gov/api/gui"
+      - id: asco_meeting_library
+        type: conference
+        priority: 2
+        url: "https://meetinglibrary.asco.org/"
+      - id: asco_daily_news
+        type: conference_news
+        priority: 2
+        url: "https://dailynews.ascopubs.org/"
+      - id: esmo_daily_reporter
+        type: conference_news
+        priority: 2
+        url: "https://dailyreporter.esmo.org/"
+      - id: nature_cancer
+        type: journal
+        priority: 1
+        url: "https://www.nature.com/natcancer/"
+      - id: cancer_discovery
+        type: journal
+        priority: 1
+        url: "https://aacrjournals.org/cancerdiscovery"
+      - id: jco
+        type: journal
+        priority: 1
+        url: "https://ascopubs.org/journal/jco"
+      - id: lancet_oncology
+        type: journal
+        priority: 1
+        url: "https://www.thelancet.com/journals/lanonc/home"
+      - id: annals_of_oncology
+        type: journal
+        priority: 1
+        url: "https://www.annalsofoncology.org/"
+      - id: medrxiv_oncology
+        type: preprint
+        priority: 3
+        url: "https://www.medrxiv.org/"
+      - id: biorxiv_cancer_biology
+        type: preprint
+        priority: 3
+        url: "https://www.biorxiv.org/"
+
+  computational_biology:
+    weight: 0.35
+    sources:
+      - id: nature_methods
+        type: journal
+        priority: 1
+        url: "https://www.nature.com/nmeth/"
+      - id: nature_biotechnology
+        type: journal
+        priority: 1
+        url: "https://www.nature.com/nbt/"
+      - id: genome_biology
+        type: journal
+        priority: 1
+        url: "https://genomebiology.biomedcentral.com/articles"
+      - id: bioinformatics_oxford
+        type: journal
+        priority: 1
+        url: "https://academic.oup.com/bioinformatics"
+      - id: plos_comp_biology
+        type: journal
+        priority: 1
+        url: "https://journals.plos.org/ploscompbiol/"
+      - id: cell_systems
+        type: journal
+        priority: 2
+        url: "https://www.cell.com/cell-systems/home"
+      - id: nature_computational_science
+        type: journal
+        priority: 2
+        url: "https://www.nature.com/natcomputsci/"
+      - id: biorxiv
+        type: preprint
+        priority: 3
+        url: "https://www.biorxiv.org/"
+      - id: arxiv_qbio
+        type: preprint
+        priority: 3
+        url: "https://arxiv.org/archive/q-bio"
+
+  exceptional_medicine:
+    weight: 0.15
+    sources:
+      - id: nejm
+        type: journal
+        priority: 1
+        url: "https://www.nejm.org/"
+      - id: the_lancet
+        type: journal
+        priority: 1
+        url: "https://www.thelancet.com/"
+      - id: jama
+        type: journal
+        priority: 1
+        url: "https://jamanetwork.com/journals/jama"
+      - id: nature_medicine
+        type: journal
+        priority: 1
+        url: "https://www.nature.com/nm/"
+      - id: nih_news_releases
+        type: institute
+        priority: 2
+        url: "https://www.nih.gov/news-events/news-releases"
+      - id: who_news
+        type: global_health
+        priority: 2
+        url: "https://www.who.int/news"
+      - id: fda_novel_drug_approvals
+        type: regulator
+        priority: 2
+        url: "https://www.fda.gov/drugs/novel-drug-approvals-fda"

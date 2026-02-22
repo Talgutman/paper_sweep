@@ -1,0 +1,75 @@
+name: weekly-report
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 08:00 Israel time can be 05:00 UTC (DST) or 06:00 UTC (standard time).
+    - cron: "0 5 * * 0"
+    - cron: "0 6 * * 0"
+
+jobs:
+  send-weekly-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard run time for Israel Sunday 08:00
+        id: guard
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          local_day="$(TZ=Asia/Jerusalem date +%u)"
+          local_hour="$(TZ=Asia/Jerusalem date +%H)"
+          if [[ "$local_day" == "7" && "$local_hour" == "08" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.guard.outputs.should_run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: steps.guard.outputs.should_run == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Generate report markdown
+        if: steps.guard.outputs.should_run == 'true'
+        id: build_report
+        shell: bash
+        run: |
+          report_path="reports/weekly-$(TZ=Asia/Jerusalem date +%F).md"
+          python scripts/generate_weekly_report.py --output "$report_path" --days 7
+          echo "report_path=$report_path" >> "$GITHUB_OUTPUT"
+
+      - name: Email report via Resend
+        if: steps.guard.outputs.should_run == 'true'
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          REPORT_RECIPIENT: ${{ vars.REPORT_RECIPIENT }}
+          REPORT_SENDER: ${{ vars.REPORT_SENDER }}
+          REPORT_REPLY_TO: ${{ vars.REPORT_REPLY_TO }}
+        shell: bash
+        run: |
+          recipient="${REPORT_RECIPIENT:-tgutman100@gmail.com}"
+          sender="${REPORT_SENDER:-onboarding@resend.dev}"
+          subject="Weekly Research Report - $(TZ=Asia/Jerusalem date +%F)"
+          python scripts/send_email_resend.py \
+            --subject "$subject" \
+            --to "$recipient" \
+            --from "$sender" \
+            --input "${{ steps.build_report.outputs.report_path }}"
+
+      - name: Upload report artifact
+        if: steps.guard.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-report
+          path: ${{ steps.build_report.outputs.report_path }}
