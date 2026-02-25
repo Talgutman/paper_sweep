@@ -43,6 +43,9 @@ jobs:
       - name: Generate report markdown
         if: steps.guard.outputs.should_run == 'true'
         id: build_report
+        env:
+          NCBI_EMAIL: ${{ vars.NCBI_EMAIL }}
+          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
         shell: bash
         run: |
           report_path="reports/weekly-$(TZ=Asia/Jerusalem date +%F).md"

@@ -4,8 +4,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
+import random
 import re
+import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -14,6 +18,10 @@ from zoneinfo import ZoneInfo
 API_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 USER_AGENT = "paper-sweep-weekly-agent/1.0"
 TIMEZONE = ZoneInfo("Asia/Jerusalem")
+MAX_RETRIES = 5
+RETRIABLE_HTTP = {429, 500, 502, 503, 504}
+BASE_BACKOFF_SECONDS = 1.5
+_LAST_REQUEST_TS = 0.0
 
 LANE_QUERIES = {
     "cancer": (
@@ -127,22 +135,73 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional contact email for NCBI requests.",
     )
+    parser.add_argument(
+        "--ncbi-api-key",
+        default=None,
+        help="Optional NCBI API key to increase E-utilities rate limits.",
+    )
     return parser.parse_args()
 
 
-def ncbi_request(endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
+def parse_retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        return None
+    return max(0.0, min(seconds, 120.0))
+
+
+def request_interval(ncbi_api_key: str | None) -> float:
+    # NCBI guidance: ~3 req/s without API key, higher throughput with key.
+    return 0.12 if ncbi_api_key else 0.40
+
+
+def ncbi_request(
+    endpoint: str,
+    params: dict[str, Any],
+    ncbi_email: str | None,
+    ncbi_api_key: str | None,
+) -> dict[str, Any]:
+    global _LAST_REQUEST_TS
+
     query = {"tool": "paper_sweep", **params}
+    if ncbi_email:
+        query["email"] = ncbi_email
+    if ncbi_api_key:
+        query["api_key"] = ncbi_api_key
     query_str = urllib.parse.urlencode(query)
     url = f"{API_BASE}/{endpoint}?{query_str}"
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": USER_AGENT},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        body = resp.read().decode("utf-8")
-    if params.get("retmode") == "xml":
-        return {"xml": body}
-    return json.loads(body)
+
+    for attempt in range(MAX_RETRIES + 1):
+        interval = request_interval(ncbi_api_key)
+        elapsed = time.monotonic() - _LAST_REQUEST_TS
+        if elapsed < interval:
+            time.sleep(interval - elapsed)
+
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        _LAST_REQUEST_TS = time.monotonic()
+
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = resp.read().decode("utf-8")
+            if params.get("retmode") == "xml":
+                return {"xml": body}
+            return json.loads(body)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in RETRIABLE_HTTP or attempt >= MAX_RETRIES:
+                raise
+            retry_after = parse_retry_after(exc.headers.get("Retry-After"))
+            backoff = retry_after if retry_after is not None else BASE_BACKOFF_SECONDS * (2**attempt)
+            time.sleep(min(backoff, 120.0) + random.uniform(0.0, 0.3))
+        except urllib.error.URLError:
+            if attempt >= MAX_RETRIES:
+                raise
+            backoff = BASE_BACKOFF_SECONDS * (2**attempt)
+            time.sleep(min(backoff, 60.0) + random.uniform(0.0, 0.3))
+
+    raise RuntimeError("Unreachable: NCBI retry loop exhausted without result.")
 
 
 def build_date_clause(days: int) -> tuple[str, dt.date, dt.date]:
@@ -152,7 +211,12 @@ def build_date_clause(days: int) -> tuple[str, dt.date, dt.date]:
     return clause, start, end
 
 
-def pubmed_search(query: str, retmax: int, ncbi_email: str | None) -> list[str]:
+def pubmed_search(
+    query: str,
+    retmax: int,
+    ncbi_email: str | None,
+    ncbi_api_key: str | None,
+) -> list[str]:
     params: dict[str, Any] = {
         "db": "pubmed",
         "term": query,
@@ -160,13 +224,15 @@ def pubmed_search(query: str, retmax: int, ncbi_email: str | None) -> list[str]:
         "retmode": "json",
         "sort": "pub+date",
     }
-    if ncbi_email:
-        params["email"] = ncbi_email
-    payload = ncbi_request("esearch.fcgi", params)
+    payload = ncbi_request("esearch.fcgi", params, ncbi_email=ncbi_email, ncbi_api_key=ncbi_api_key)
     return payload.get("esearchresult", {}).get("idlist", [])
 
 
-def pubmed_summaries(pmids: list[str], ncbi_email: str | None) -> dict[str, dict[str, Any]]:
+def pubmed_summaries(
+    pmids: list[str],
+    ncbi_email: str | None,
+    ncbi_api_key: str | None,
+) -> dict[str, dict[str, Any]]:
     if not pmids:
         return {}
     params: dict[str, Any] = {
@@ -174,14 +240,16 @@ def pubmed_summaries(pmids: list[str], ncbi_email: str | None) -> dict[str, dict
         "id": ",".join(pmids),
         "retmode": "json",
     }
-    if ncbi_email:
-        params["email"] = ncbi_email
-    payload = ncbi_request("esummary.fcgi", params)
+    payload = ncbi_request("esummary.fcgi", params, ncbi_email=ncbi_email, ncbi_api_key=ncbi_api_key)
     result = payload.get("result", {})
     return {pmid: result.get(pmid, {}) for pmid in pmids}
 
 
-def pubmed_abstracts(pmids: list[str], ncbi_email: str | None) -> dict[str, str]:
+def pubmed_abstracts(
+    pmids: list[str],
+    ncbi_email: str | None,
+    ncbi_api_key: str | None,
+) -> dict[str, str]:
     if not pmids:
         return {}
     params: dict[str, Any] = {
@@ -189,9 +257,7 @@ def pubmed_abstracts(pmids: list[str], ncbi_email: str | None) -> dict[str, str]
         "id": ",".join(pmids),
         "retmode": "xml",
     }
-    if ncbi_email:
-        params["email"] = ncbi_email
-    xml_text = ncbi_request("efetch.fcgi", params)["xml"]
+    xml_text = ncbi_request("efetch.fcgi", params, ncbi_email=ncbi_email, ncbi_api_key=ncbi_api_key)["xml"]
 
     import xml.etree.ElementTree as ET
 
@@ -334,10 +400,16 @@ def build_caveats(title: str, abstract_text: str, evidence_level: str) -> list[s
     return caveats[:3]
 
 
-def fetch_lane_items(lane: str, query: str, retmax: int, ncbi_email: str | None) -> list[dict[str, Any]]:
-    pmids = pubmed_search(query, retmax=retmax, ncbi_email=ncbi_email)
-    summaries = pubmed_summaries(pmids, ncbi_email=ncbi_email)
-    abstracts = pubmed_abstracts(pmids, ncbi_email=ncbi_email)
+def fetch_lane_items(
+    lane: str,
+    query: str,
+    retmax: int,
+    ncbi_email: str | None,
+    ncbi_api_key: str | None,
+) -> list[dict[str, Any]]:
+    pmids = pubmed_search(query, retmax=retmax, ncbi_email=ncbi_email, ncbi_api_key=ncbi_api_key)
+    summaries = pubmed_summaries(pmids, ncbi_email=ncbi_email, ncbi_api_key=ncbi_api_key)
+    abstracts = pubmed_abstracts(pmids, ncbi_email=ncbi_email, ncbi_api_key=ncbi_api_key)
 
     items: list[dict[str, Any]] = []
     for pmid in pmids:
@@ -394,14 +466,26 @@ def render_item(index: int, item: dict[str, Any]) -> list[str]:
     return lines
 
 
-def generate_report(output_path: Path, days: int, retmax: int, ncbi_email: str | None) -> None:
+def generate_report(
+    output_path: Path,
+    days: int,
+    retmax: int,
+    ncbi_email: str | None,
+    ncbi_api_key: str | None,
+) -> None:
     date_clause, start_date, end_date = build_date_clause(days)
     now = dt.datetime.now(tz=TIMEZONE)
 
     lane_results: dict[str, list[dict[str, Any]]] = {}
     for lane, query_template in LANE_QUERIES.items():
         query = query_template.format(date_clause=date_clause)
-        lane_results[lane] = fetch_lane_items(lane, query=query, retmax=retmax, ncbi_email=ncbi_email)
+        lane_results[lane] = fetch_lane_items(
+            lane,
+            query=query,
+            retmax=retmax,
+            ncbi_email=ncbi_email,
+            ncbi_api_key=ncbi_api_key,
+        )
 
     selected: dict[str, list[dict[str, Any]]] = {}
     for lane, meta in SECTION_META.items():
@@ -464,7 +548,15 @@ def main() -> None:
     args = parse_args()
     today = dt.datetime.now(tz=TIMEZONE).date()
     output = Path(args.output or f"reports/weekly-{today:%Y-%m-%d}.md")
-    generate_report(output_path=output, days=args.days, retmax=args.retmax, ncbi_email=args.ncbi_email)
+    ncbi_email = args.ncbi_email or os.environ.get("NCBI_EMAIL")
+    ncbi_api_key = args.ncbi_api_key or os.environ.get("NCBI_API_KEY")
+    generate_report(
+        output_path=output,
+        days=args.days,
+        retmax=args.retmax,
+        ncbi_email=ncbi_email,
+        ncbi_api_key=ncbi_api_key,
+    )
     print(json.dumps({"report_path": str(output)}))
 
 
