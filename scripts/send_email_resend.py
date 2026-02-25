@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 
 RESEND_API_URL = "https://api.resend.com/emails"
+USER_AGENT = "paper-sweep-weekly-agent/1.0"
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +63,7 @@ def main() -> None:
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
         },
     )
     try:
